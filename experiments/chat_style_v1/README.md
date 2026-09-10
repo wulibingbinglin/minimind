@@ -46,3 +46,20 @@ results目录保存时间戳JSON（Git忽略），包含配置、软件版本、
 baseline用于前后对照，不是大规模能力评测；基础质量差时先处理基础模型，不靠两个样本强行修复。
 
 后续LoRA比较必须保持同一基础权重、Tokenizer、模板、问题和生成设置；如果改用自定义MiniMind，先重新跑其未微调基线，再同实现比较，避免混淆实现差异和训练收益。
+
+## 4. 私有数据进入真实SFTDataset（下一环节，不训练）
+
+本地整理好的train_v1.jsonl留在仓库外，通过SSH/SFTP单独上传到服务器
+`experiments/chat_style_v1/private/train_v1.jsonl`，不要用Git上传聊天。
+private/目录及其中datasets缓存已被本实验.gitignore忽略（不是加密）。
+
+```bash
+python experiments/chat_style_v1/check_data.py --model-dir ./minimind-3 --data experiments/chat_style_v1/private/train_v1.jsonl --max-length 512
+```
+
+真实调用：check_data.py → dataset/lm_dataset.py的SFTDataset → __getitem__ → input_ids/labels。
+该脚本会用当前服务器的Dataset实现检查，出现断言失败要停下来核对，不绕过检查。
+所有样本均检查截断、PAD监督、助手段边界；默认只打印第0条完整明细，可用--show-sample 1切换。
+文本里的system/user仍然是上下文，不是删掉；labels的-100只屏蔽直接监督。
+数据集返回的两者都为[T]且尚未错位；logits[t]最终与labels[t+1]计算loss。
+空think处理在原Dataset内带有随机性；脚本固定并重放种子以检查一次具体结果，不宣称训练时每次都相同。
