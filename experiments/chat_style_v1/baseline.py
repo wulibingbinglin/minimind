@@ -67,10 +67,14 @@ def main():
         messages = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}]
         text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True,
                                               enable_thinking=False, open_thinking=False)
-        inputs = tokenizer(text, add_special_tokens=False, return_tensors="pt").to(args.device)
+        # token_type_ids用于某些模型的片段编号；本次Qwen3生成不接收它。
+        # 明确只准备所需的Token ID和有效位置mask，不把多余字段展开给generate。
+        inputs = tokenizer(text, add_special_tokens=False, return_tensors="pt",
+                           return_token_type_ids=False, return_attention_mask=True).to(args.device)
         prompt_length = inputs.input_ids.shape[1]
         with torch.inference_mode():
-            generated = model.generate(**inputs, max_new_tokens=args.max_new_tokens,
+            generated = model.generate(input_ids=inputs.input_ids, attention_mask=inputs.attention_mask,
+                                       max_new_tokens=args.max_new_tokens,
                                        do_sample=False, use_cache=True,
                                        eos_token_id=tokenizer.eos_token_id, pad_token_id=pad_id)
         answer_ids = generated[0, prompt_length:].tolist()
