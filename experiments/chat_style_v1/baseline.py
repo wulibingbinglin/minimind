@@ -13,6 +13,10 @@ from pathlib import Path
 
 
 SYSTEM = "你是用户的文字风格分身，在与熟悉的同学私聊。根据上下文自然回复；不要把对方的经历说成自己的经历。"
+SYSTEM_VARIANTS = {
+    "original": SYSTEM,
+    "concise": "你正在和熟悉的同学聊天。先回应对方这句话的意思，用一到两句简短口语回复，不要列清单，不要编造不知道的经历。",
+}
 CASES = [
     ("tired", "今天实验做了一整天，结果还没跑出来，有点崩溃。"),
     ("good_news", "我终于把拖了两周的报告写完了！"),
@@ -28,7 +32,10 @@ def main():
     parser.add_argument("--model-dir", required=True)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--max-new-tokens", type=int, default=96)
+    parser.add_argument("--system-variant", choices=tuple(SYSTEM_VARIANTS), default="original",
+                        help="original保留第一次实验；concise只改变system，其余测试条件不变")
     args = parser.parse_args()
+    system = SYSTEM_VARIANTS[args.system_variant]
     if args.max_new_tokens < 1:
         parser.error("max-new-tokens 必须大于0")
     model_dir = Path(args.model_dir).resolve(strict=True)
@@ -36,6 +43,7 @@ def main():
     config = json.loads(config_path.read_text(encoding="utf-8"))
     print("配置声明：", config.get("model_type"), config.get("architectures"), flush=True)
     print("注意：配置和目录名不能证明下载来源或SFT训练阶段。", flush=True)
+    print("系统提示版本：", args.system_variant, "\n系统提示：", system, flush=True)
 
     import torch
     import transformers
@@ -64,7 +72,7 @@ def main():
     # 不采样：先固定解码方式，降低随机性对训前/训后比较的干扰。
     records = []
     for case_id, prompt in CASES:
-        messages = [{"role": "system", "content": SYSTEM}, {"role": "user", "content": prompt}]
+        messages = [{"role": "system", "content": system}, {"role": "user", "content": prompt}]
         text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True,
                                               enable_thinking=False, open_thinking=False)
         # token_type_ids用于某些模型的片段编号；本次Qwen3生成不接收它。
@@ -84,20 +92,22 @@ def main():
                       answer_ids=answer_ids, answer=answer,
                       ended_with_eos=bool(answer_ids and answer_ids[-1] == tokenizer.eos_token_id))
         records.append(record)
-        print(f"\n[{case_id}] {prompt}\n模型：{answer}\n输入{prompt_length} Token，生成{len(answer_ids)} Token", flush=True)
+        print(f"\n[{case_id}] {prompt}\n模型：{answer}\n输入{prompt_length} Token，生成{len(answer_ids)} Token"
+              f"，EOS结束：{record['ended_with_eos']}", flush=True)
 
     # 4. 保存新文件而非覆盖；不保存权重。结果目录被Git忽略。
     repo = Path(__file__).resolve().parents[2]
     revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=repo, capture_output=True, text=True)
     result_dir = Path(__file__).resolve().parent / "results"
     result_dir.mkdir(exist_ok=True)
-    output = result_dir / ("baseline_" + datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + ".json")
+    output = result_dir / ("baseline_" + args.system_variant + "_" +
+                           datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ") + ".json")
     report = dict(model_dir=str(model_dir), model_class=type(model).__name__, config=config,
                   source_status="来源与训练阶段待人工确认", torch_version=torch.__version__,
                   transformers_version=transformers.__version__, git_commit=revision.stdout.strip(),
                   config_sha256=hashlib.sha256(config_path.read_bytes()).hexdigest(),
                   generation=dict(do_sample=False, max_new_tokens=args.max_new_tokens, use_cache=True),
-                  system=SYSTEM, records=records)
+                  system_variant=args.system_variant, system=system, records=records)
     with output.open("x", encoding="utf-8") as handle:
         json.dump(report, handle, ensure_ascii=False, indent=2)
     print("\n结果保存至：", output, "\n没有训练，没有保存或覆盖模型权重。")

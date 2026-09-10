@@ -24,6 +24,20 @@ system定义角色，user提供问题；模板追加assistant开头，再编码�
 generate内部循环forward，返回Prompt与新回答；切掉前T个ID后解码。
 关闭采样，最多96个新Token；结果记录实际格式化文本，检查思考开关是否被模板采用。
 
+### 第二次：仅改变系统提示的对照
+
+第一次original提示、五个问题与生成设置保持在代码中，不覆盖旧结果。
+第二次concise明确要求先接住话意、一到两句口语、不列清单、不编造经历：
+
+```bash
+CUDA_VISIBLE_DEVICES=0 python experiments/chat_style_v1/baseline.py --model-dir ./minimind-3 --system-variant concise
+```
+
+不加该参数仍运行original。两版结果以不同版本名及时间戳保存，终端显示是否以EOS结束。
+system和user都是模型本次读取的输入；修改system不更新参数，不等于微调。
+比较重点是接话是否正确、回复是否简短和相关，而不只是短了多少；不要把更短误当作更正确。
+这五题经过提示调试后属于开发集，后续判断泛化需要另留未用于调试的新问题。
+
 ## 3. 保存结果，用于微调前后对照
 
 results目录保存时间戳JSON（Git忽略），包含配置、软件版本、输入ID、回答ID及是否EOS结束。
